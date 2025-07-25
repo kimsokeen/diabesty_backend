@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# IDEs
+.vscode/
+.idea/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# If your models are HUGE and you plan to store them on S3/GCS instead of Git
+# models/
+# *.h5
+# *.keras
+
+# If you have any specific data files that shouldn't be committed
+# data/
