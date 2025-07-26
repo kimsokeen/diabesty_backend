@@ -17,6 +17,8 @@ dependencies = [
     "python-multipart (==0.0.9)"
 ]
 
+[tool.poetry] # <--- ADDED THIS SECTION
+package-mode = false # <--- ADDED THIS LINE
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
