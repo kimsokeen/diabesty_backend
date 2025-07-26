@@ -1,0 +1,20 @@
+[project]
+name = "poetry add fastapi==0-111-0"
+version = "poetry add uvicorn==0.30.1"
+description = "poetry add tensorflow==2.16.1 # Or 2.15.0"
+authors = [
+    {name = "poetry add Pillow==10.3.0"}
+]
+license = {text = "poetry add numpy==1.26.4"}
+readme = "README.md"
+requires-python = "poetry add opencv-python==4.9.0.80"
+dependencies = [
+]
+
+[tool.poetry]
+packages = [{include = "poetry add fastapi==0"}]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
