@@ -1,17 +1,22 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.responses import Response
+from fastapi.responses import Response # Although Response is imported, it's not used in this endpoint, but keeping it as per original
 import tensorflow as tf
 from tensorflow.keras import backend as K
-from tensorflow.keras.models import load_model
+# No longer need to import load_model directly here, as we'll use tf.keras.models.load_model
 from PIL import Image
 from PIL import ImageOps
 import numpy as np
 import io
 import base64
 import cv2
+import os # Import os for environment variables and path handling
 
+# --- 1. Global variables to hold the loaded models ---
+# Initialize them to None. They will be populated during the startup event.
+classifier_model = None
+segmentation_model = None
 
 # Custom functions for segmentation model
 def dice_loss(y_true, y_pred):
@@ -28,19 +33,48 @@ def iou_metric(y_true, y_pred):
     union = K.sum(y_true_f) + K.sum(y_pred_f) - intersection
     return intersection / (union + 1e-6)
 
-# Load models
-model = tf.keras.models.load_model("models/diabetic_foot_ulcer_classifier_final.keras")
-seg_model = load_model(
-    "models/foot_ulcer_model_mobilenet.keras",
-    custom_objects={"dice_loss": dice_loss, "iou_metric": iou_metric}
-)
-
 # FastAPI setup
 app = FastAPI()
 
-# --- START OF CHANGE ---
-# IMPORTANT: Replace "https://YOUR_NETLIFY_APP_URL.netlify.app" with your actual Netlify URL
-# You can find your Netlify URL in your Netlify dashboard after your frontend is deployed.
+# --- 2. Define the startup event handler for loading models ---
+@app.on_event("startup")
+async def load_models_on_startup():
+    """
+    Loads the Keras classification and segmentation models into memory
+    when the FastAPI application starts. This ensures models are loaded
+    only once, not for every request.
+    """
+    global classifier_model
+    global segmentation_model
+
+    # Define model paths using environment variables for flexibility
+    # Default paths are provided for local testing if env vars are not set
+    classifier_model_path = os.getenv("CLASSIFIER_MODEL_PATH", "models/diabetic_foot_ulcer_classifier_final.keras")
+    segmentation_model_path = os.getenv("SEGMENTATION_MODEL_PATH", "models/foot_ulcer_model_mobilenet.keras")
+
+    print(f"Attempting to load classifier model from: {classifier_model_path}")
+    try:
+        classifier_model = tf.keras.models.load_model(classifier_model_path)
+        classifier_model.summary() # Print summary to confirm loading
+        print("Classifier model loaded successfully during startup.")
+    except Exception as e:
+        print(f"Error loading classifier model: {e}")
+        raise RuntimeError(f"Failed to load classifier ML model: {e}")
+
+    print(f"Attempting to load segmentation model from: {segmentation_model_path}")
+    try:
+        segmentation_model = tf.keras.models.load_model(
+            segmentation_model_path,
+            custom_objects={"dice_loss": dice_loss, "iou_metric": iou_metric}
+        )
+        segmentation_model.summary() # Print summary to confirm loading
+        print("Segmentation model loaded successfully during startup.")
+    except Exception as e:
+        print(f"Error loading segmentation model: {e}")
+        raise RuntimeError(f"Failed to load segmentation ML model: {e}")
+
+
+# --- CORS Middleware (as per your original code) ---
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -50,23 +84,16 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_methods=["*"], # Allows all HTTP methods (GET, POST, PUT, DELETE, etc.)
-    allow_headers=["*"], # Allows all headers
-    allow_credentials=True # Important if you use cookies/authentication
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True
 )
-# --- END OF CHANGE ---
 
+# --- Helper functions (unchanged) ---
 def analyze_hsv_from_mask(original_img, mask):
     binary_mask = (mask > 0).astype(np.uint8)
-    # Ensure original_img is in BGR if it's coming from typical OpenCV loading,
-    # as cv2.COLOR_RGB2HSV expects RGB, but default imread is BGR.
-    # If your original_img is already guaranteed to be RGB, then this check is not strictly needed.
-    # For safety, let's assume original_img might be BGR if coming from typical CV2 operations
-    # and convert it to RGB first if it's not already. Or, more simply, use BGR2HSV directly.
-    # Let's assume original_img is in RGB format as per your original code's cv2.COLOR_RGB2HSV.
     hsv_img = cv2.cvtColor(original_img, cv2.COLOR_RGB2HSV)
 
-    # Mask the wound area
     wound_pixels = hsv_img[binary_mask == 1]
 
     if wound_pixels.size == 0:
@@ -76,14 +103,8 @@ def analyze_hsv_from_mask(original_img, mask):
             "black_area_percent": 0,
         }
 
-    # Reshape to (N, 1, 3) so cv2.inRange works correctly for individual pixels
-    # For a list of pixels, you can also use wound_pixels directly with inRange if it's (N, 3)
-    # but reshaping to (N, 1, 3) is a safe explicit way for cv2.inRange
     wound_pixels_reshaped = wound_pixels.reshape(-1, 1, 3)
 
-    # --- UPDATED COLOR RANGES ---
-    # Using the suggested HSV ranges (OpenCV's H: 0-179, S: 0-255, V: 0-255)
-    # Red needs two ranges due to wrapping
     red_lower_1 = np.array([0, 100, 100], dtype=np.uint8)
     red_upper_1 = np.array([10, 255, 255], dtype=np.uint8)
     
@@ -94,13 +115,11 @@ def analyze_hsv_from_mask(original_img, mask):
     yellow_upper = np.array([40, 255, 255], dtype=np.uint8)
 
     black_lower = np.array([0, 0, 0], dtype=np.uint8)
-    black_upper = np.array([179, 50, 50], dtype=np.uint8) # Hue doesn't matter for black, Saturation and Value are low
+    black_upper = np.array([179, 50, 50], dtype=np.uint8)
 
-    # --- Processing Colors ---
     result = {}
     total_wound_pixels = wound_pixels_reshaped.shape[0]
 
-    # Calculate Red area
     mask_red_1 = cv2.inRange(wound_pixels_reshaped, red_lower_1, red_upper_1)
     mask_red_2 = cv2.inRange(wound_pixels_reshaped, red_lower_2, red_upper_2)
     mask_red_combined = cv2.bitwise_or(mask_red_1, mask_red_2)
@@ -108,15 +127,11 @@ def analyze_hsv_from_mask(original_img, mask):
     result["red_area_percent"] = round((count_red / total_wound_pixels) * 100, 2)
     print(f"Red pixels: {count_red} ({result['red_area_percent']}%) out of {total_wound_pixels}")
 
-
-    # Calculate Yellow area
     mask_yellow = cv2.inRange(wound_pixels_reshaped, yellow_lower, yellow_upper)
     count_yellow = np.count_nonzero(mask_yellow)
     result["yellow_area_percent"] = round((count_yellow / total_wound_pixels) * 100, 2)
     print(f"Yellow pixels: {count_yellow} ({result['yellow_area_percent']}%) out of {total_wound_pixels}")
 
-
-    # Calculate Black area
     mask_black = cv2.inRange(wound_pixels_reshaped, black_lower, black_upper)
     count_black = np.count_nonzero(mask_black)
     result["black_area_percent"] = round((count_black / total_wound_pixels) * 100, 2)
@@ -128,7 +143,6 @@ def detect_reference_coin_radius(image):
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     blurred = cv2.medianBlur(gray, 7)
 
-    # Hough Circle Transform
     circles = cv2.HoughCircles(
         blurred,
         cv2.HOUGH_GRADIENT,
@@ -142,18 +156,14 @@ def detect_reference_coin_radius(image):
 
     if circles is not None:
         circles = np.uint16(np.around(circles))
-        # Choose the one in bottom-right corner
         height, width = image.shape[:2]
         bottom_right_circle = max(
-            circles[0], key=lambda c: (c[0] + c[1])  # bottom-right = high x+y
+            circles[0], key=lambda c: (c[0] + c[1])
         )
-        return bottom_right_circle  # x, y, radius
+        return bottom_right_circle
     return None
 
 def pad_to_square(image: Image.Image, fill_color=(0, 0, 0)) -> Image.Image:
-    """
-    Pads the image to a square using black (or specified color).
-    """
     width, height = image.size
     max_side = max(width, height)
     delta_w = max_side - width
@@ -161,8 +171,17 @@ def pad_to_square(image: Image.Image, fill_color=(0, 0, 0)) -> Image.Image:
     padding = (delta_w // 2, delta_h // 2, delta_w - delta_w // 2, delta_h - delta_h // 2)
     return ImageOps.expand(image, padding, fill=fill_color)
 
+# --- 3. Your /upload/ endpoint (now using global models) ---
 @app.post("/upload/")
 async def upload(file: UploadFile = File(...)):
+    """
+    Handles image upload, processes it using the loaded ML models,
+    and returns prediction results.
+    """
+    # Safeguard: Ensure models are loaded before processing requests
+    if classifier_model is None or segmentation_model is None:
+        raise HTTPException(status_code=503, detail="ML models are not loaded yet. Please try again in a moment.")
+
     contents = await file.read()
 
     # Classification Preprocessing
@@ -174,8 +193,8 @@ async def upload(file: UploadFile = File(...)):
     image_array = np.array(image) / 255.0
     image_input = np.expand_dims(image_array, axis=0)
 
-    # Classify
-    prediction = model.predict(image_input)[0][0]
+    # Classify using the global classifier_model
+    prediction = classifier_model.predict(image_input)[0][0]
     predicted_class = "non-diabetic foot" if prediction >= 0.7 else "diabetic foot"
 
     response_data = {
@@ -187,7 +206,8 @@ async def upload(file: UploadFile = File(...)):
     # If diabetic, run segmentation
     if prediction < 0.7:
         seg_input = np.expand_dims(np.array(padded_image.resize((256, 256))) / 255.0, axis=0)
-        mask = seg_model.predict(seg_input)[0]
+        # Predict using the global segmentation_model
+        mask = segmentation_model.predict(seg_input)[0]
 
         # Convert to binary mask
         binary_mask = (mask > 0.3).astype(np.uint8)
@@ -202,7 +222,7 @@ async def upload(file: UploadFile = File(...)):
         mask_pil.save(buffered, format="PNG")
         mask_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-                # Resize original image
+        # Resize original image for HSV and coin detection
         original_for_hsv = np.array(padded_image.resize((256, 256)))
 
         hsv_stats = analyze_hsv_from_mask(original_for_hsv, mask_image)
@@ -231,7 +251,6 @@ async def upload(file: UploadFile = File(...)):
             response_data["coin_radius_px"] = None
             response_data["wound_area_cm2"] = None
             response_data["circle_image_base64"] = None
-
 
         response_data["wound_area_pixels"] = int(wound_area)
         response_data["mask_base64"] = mask_base64
