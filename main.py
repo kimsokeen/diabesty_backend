@@ -29,7 +29,7 @@ def iou_metric(y_true, y_pred):
     return intersection / (union + 1e-6)
 
 # Load models
-model = tf.keras.models.load_model("models/mobilenet_model1.h5")
+model = tf.keras.models.load_model("models/diabetic_foot_ulcer_classifier_final.keras")
 seg_model = load_model(
     "models/foot_ulcer_model_mobilenet.keras",
     custom_objects={"dice_loss": dice_loss, "iou_metric": iou_metric}
