@@ -176,7 +176,7 @@ async def upload(file: UploadFile = File(...)):
 
     # Classify
     prediction = model.predict(image_input)[0][0]
-    predicted_class = "non-diabetic foot" if prediction >= 0.5 else "diabetic foot"
+    predicted_class = "non-diabetic foot" if prediction >= 0.7 else "diabetic foot"
 
     response_data = {
         "filename": file.filename,
