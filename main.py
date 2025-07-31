@@ -185,7 +185,7 @@ async def upload(file: UploadFile = File(...)):
     }
 
     # If diabetic, run segmentation
-    if prediction < 0.5:
+    if prediction < 0.7:
         seg_input = np.expand_dims(np.array(padded_image.resize((256, 256))) / 255.0, axis=0)
         mask = seg_model.predict(seg_input)[0]
 
