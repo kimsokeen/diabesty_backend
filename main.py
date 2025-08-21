@@ -195,7 +195,7 @@ async def upload(file: UploadFile = File(...)):
 
     # Classify using the global classifier_model
     prediction = classifier_model.predict(image_input)[0][0]
-    predicted_class = "non-diabetic foot" if prediction >= 0.7 else "diabetic foot"
+    predicted_class = "non-diabetic foot" if prediction >= 0.9 else "diabetic foot"
 
     response_data = {
         "filename": file.filename,
@@ -204,7 +204,7 @@ async def upload(file: UploadFile = File(...)):
     }
 
     # If diabetic, run segmentation
-    if prediction < 0.7:
+    if prediction < 0.9:
         seg_input = np.expand_dims(np.array(padded_image.resize((256, 256))) / 255.0, axis=0)
         # Predict using the global segmentation_model
         mask = segmentation_model.predict(seg_input)[0]
